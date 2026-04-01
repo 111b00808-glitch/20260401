@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>精緻五子棋 - AI 對戰音效版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #f3f4f6;
+            touch-action: manipulation;
+        }
+        .wood-texture {
+            background-color: #deb887;
+            background-image: radial-gradient(circle, #e3c197 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+        .mode-active {
+            background-color: #1f2937 !important;
+            color: white !important;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="max-w-md w-full bg-white rounded-2xl shadow-2xl p-6 flex flex-col gap-6">
+        <!-- 標題與模式切換 -->
+        <div class="text-center">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">五子棋 AI</h1>
+            <div class="flex justify-center gap-2 mb-4">
+                <button id="pvp-btn" class="text-sm px-4 py-1 rounded-full bg-gray-200 text-gray-600 font-medium transition-all mode-active">雙人對戰</button>
+                <button id="pvc-btn" class="text-sm px-4 py-1 rounded-full bg-gray-200 text-gray-600 font-medium transition-all">人機對戰</button>
+            </div>
+            <div id="status-display" class="flex items-center justify-center gap-3 py-2 px-4 bg-gray-100 rounded-full inline-block mx-auto">
+                <div id="turn-indicator" class="w-4 h-4 rounded-full bg-black transition-all"></div>
+                <span id="status-text" class="font-medium text-gray-700">黑棋落子</span>
+            </div>
+        </div>
+
+        <!-- 遊戲畫布 -->
+        <div class="relative aspect-square w-full border-8 border-[#8b4513] rounded-lg shadow-inner overflow-hidden wood-texture">
+            <canvas id="gameCanvas" class="w-full h-full cursor-pointer"></canvas>
+            <div id="ai-loading" class="absolute inset-0 bg-black/10 flex items-center justify-center hidden">
+                <div class="bg-white/90 px-4 py-2 rounded-lg shadow-lg text-sm font-bold text-gray-800 animate-bounce">AI 思考中...</div>
+            </div>
+        </div>
+
+        <!-- 功能按鈕 -->
+        <div class="grid grid-cols-2 gap-4">
+            <button id="undo-btn" class="flex items-center justify-center gap-2 bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold py-3 px-4 rounded-xl transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+                悔棋
+            </button>
+            <button id="reset-btn" class="flex items-center justify-center gap-2 bg-gray-800 hover:bg-black text-white font-bold py-3 px-4 rounded-xl transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+                重新開始
+            </button>
+        </div>
+    </div>
+
+    <!-- 獲勝彈窗 -->
+    <div id="win-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center hidden z-50">
+        <div class="bg-white p-8 rounded-3xl shadow-2xl text-center scale-90 transition-transform">
+            <div id="winner-icon" class="w-20 h-20 rounded-full mx-auto mb-4 border-4 border-gray-200"></div>
+            <h2 id="win-message" class="text-3xl font-bold mb-6">黑棋獲勝！</h2>
+            <button id="play-again-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform active:scale-95">
+                再玩一局
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // 音效系統
+        const AudioEngine = (() => {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            const playTone = (freq, type, duration, volume = 0.1) => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                
+                gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+                
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            };
+
+            return {
+                playPlace: () => {
+                    // 模擬棋子敲擊木頭聲 (低頻 + 短暫高頻打擊聲)
+                    playTone(200, 'sine', 0.1, 0.2);
+                    playTone(800, 'square', 0.02, 0.05);
+                },
+                playWin: () => {
+                    // 勝利琶音
+                    const now = audioCtx.currentTime;
+                    [523.25, 659.25, 783.99, 1046.50].forEach((f, i) => {
+                        setTimeout(() => playTone(f, 'sine', 0.5, 0.1), i * 150);
+                    });
+                },
+                playUndo: () => {
+                    playTone(300, 'sine', 0.2, 0.1);
+                },
+                playClick: () => {
+                    playTone(600, 'sine', 0.05, 0.05);
+                }
+            };
+        })();
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusText = document.getElementById('status-text');
+        const turnIndicator = document.getElementById('turn-indicator');
+        const winModal = document.getElementById('win-modal');
+        const winMessage = document.getElementById('win-message');
+        const winnerIcon = document.getElementById('winner-icon');
+        const undoBtn = document.getElementById('undo-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const aiLoading = document.getElementById('ai-loading');
+        const pvpBtn = document.getElementById('pvp-btn');
+        const pvcBtn = document.getElementById('pvc-btn');
+        const playAgainBtn = document.getElementById('play-again-btn');
+
+        const GRID_SIZE = 15;
+        let board = [];
+        let history = [];
+        let currentPlayer = 1; // 1: 黑, 2: 白
+        let isGameOver = false;
+        let cellSize = 0;
+        let winningHints = []; 
+        let isAiMode = false;
+        let isAiThinking = false;
+
+        function init() {
+            resetGameData();
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+        }
+
+        function resetGameData() {
+            board = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
+            history = [];
+            currentPlayer = 1;
+            isGameOver = false;
+            winningHints = [];
+            isAiThinking = false;
+            aiLoading.classList.add('hidden');
+        }
+
+        function resizeCanvas() {
+            const size = canvas.parentElement.clientWidth;
+            canvas.width = size;
+            canvas.height = size;
+            cellSize = size / GRID_SIZE;
+            drawBoard();
+        }
+
+        function resetGame() {
+            AudioEngine.playClick();
+            resetGameData();
+            winModal.classList.add('hidden');
+            updateUI();
+            drawBoard();
+        }
+
+        function updateUI() {
+            if (isGameOver) return;
+            statusText.innerText = currentPlayer === 1 ? '黑棋落子' : '白棋落子';
+            turnIndicator.className = `w-4 h-4 rounded-full ${currentPlayer === 1 ? 'bg-black' : 'bg-white border border-gray-300'}`;
+            calculateHints();
+        }
+
+        function calculateHints() {
+            winningHints = [];
+            if (isGameOver || (isAiMode && currentPlayer === 2)) return;
+
+            for (let r = 0; r < GRID_SIZE; r++) {
+                for (let c = 0; c < GRID_SIZE; c++) {
+                    if (board[r][c] === 0) {
+                        board[r][c] = currentPlayer;
+                        if (checkWin(r, c)) {
+                            winningHints.push({r, c});
+                        }
+                        board[r][c] = 0;
+                    }
+                }
+            }
+        }
+
+        function drawBoard() {
+            if (!board || board.length === 0) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#5d2e0a';
+            ctx.lineWidth = 1;
+
+            for (let i = 0; i < GRID_SIZE; i++) {
+                ctx.beginPath();
+                ctx.moveTo(cellSize / 2, i * cellSize + cellSize / 2);
+                ctx.lineTo(canvas.width - cellSize / 2, i * cellSize + cellSize / 2);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(i * cellSize + cellSize / 2, cellSize / 2);
+                ctx.lineTo(i * cellSize + cellSize / 2, canvas.height - cellSize / 2);
+                ctx.stroke();
+            }
+
+            const dots = [3, 7, 11];
+            dots.forEach(row => {
+                dots.forEach(col => {
+                    ctx.beginPath();
+                    ctx.arc(col * cellSize + cellSize / 2, row * cellSize + cellSize / 2, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = '#5d2e0a';
+                    ctx.fill();
+                });
+            });
+
+            for (let r = 0; r < GRID_SIZE; r++) {
+                for (let c = 0; c < GRID_SIZE; c++) {
+                    if (board[r][c] !== 0) {
+                        drawPiece(r, c, board[r][c]);
+                    }
+                }
+            }
+
+            winningHints.forEach(hint => {
+                drawHint(hint.r, hint.c);
+            });
+        }
+
+        function drawPiece(r, c, player) {
+            const x = c * cellSize + cellSize / 2;
+            const y = r * cellSize + cellSize / 2;
+            const radius = cellSize * 0.4;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            const gradient = ctx.createRadialGradient(x - radius/3, y - radius/3, radius/10, x, y, radius);
+            if (player === 1) {
+                gradient.addColorStop(0, '#555');
+                gradient.addColorStop(1, '#000');
+            } else {
+                gradient.addColorStop(0, '#fff');
+                gradient.addColorStop(1, '#ccc');
+            }
+            ctx.fillStyle = gradient;
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.shadowOffsetY = 2;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetY = 0;
+        }
+
+        function drawHint(r, c) {
+            const x = c * cellSize + cellSize / 2;
+            const y = r * cellSize + cellSize / 2;
+            const radius = cellSize * 0.35;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.setLineDash([5, 3]);
+            ctx.strokeStyle = currentPlayer === 1 ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.8)';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(x, y, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#ef4444';
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function handleMove(e) {
+            if (isGameOver || isAiThinking) return;
+            if (isAiMode && currentPlayer === 2) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            const x = clientX - rect.left;
+            const y = clientY - rect.top;
+            const c = Math.round((x - cellSize/2) / cellSize);
+            const r = Math.round((y - cellSize/2) / cellSize);
+
+            if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && board[r][c] === 0) {
+                placePiece(r, c);
+            }
+        }
+
+        function placePiece(r, c) {
+            board[r][c] = currentPlayer;
+            history.push({r, c, player: currentPlayer});
+            AudioEngine.playPlace();
+            
+            if (checkWin(r, c)) {
+                drawBoard();
+                endGame(currentPlayer);
+            } else {
+                currentPlayer = currentPlayer === 1 ? 2 : 1;
+                updateUI();
+                drawBoard();
+                if (isAiMode && currentPlayer === 2 && !isGameOver) {
+                    setTimeout(aiMove, 600);
+                }
+            }
+        }
+
+        function aiMove() {
+            isAiThinking = true;
+            aiLoading.classList.remove('hidden');
+            
+            setTimeout(() => {
+                let bestScore = -1;
+                let bestMoves = [];
+
+                for (let r = 0; r < GRID_SIZE; r++) {
+                    for (let c = 0; c < GRID_SIZE; c++) {
+                        if (board[r][c] === 0) {
+                            let score = evaluatePoint(r, c);
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestMoves = [{r, c}];
+                            } else if (score === bestScore) {
+                                bestMoves.push({r, c});
+                            }
+                        }
+                    }
+                }
+
+                const move = bestMoves[Math.floor(Math.random() * bestMoves.length)];
+                aiLoading.classList.add('hidden');
+                isAiThinking = false;
+                if (move) placePiece(move.r, move.c);
+            }, 500);
+        }
+
+        function evaluatePoint(r, c) {
+            let totalScore = 0;
+            totalScore += getPointScore(r, c, 2) * 1.1; 
+            totalScore += getPointScore(r, c, 1);
+            return totalScore;
+        }
+
+        function getPointScore(r, c, player) {
+            let score = 0;
+            const directions = [[0, 1], [1, 0], [1, 1], [1, -1]];
+            
+            for (let [dr, dc] of directions) {
+                let count = 1;
+                let blocks = 0;
+                
+                let nr = r + dr, nc = c + dc;
+                while(nr >= 0 && nr < GRID_SIZE && nc >= 0 && nc < GRID_SIZE && board[nr][nc] === player) {
+                    count++; nr += dr; nc += dc;
+                }
+                if (!(nr >= 0 && nr < GRID_SIZE && nc >= 0 && nc < GRID_SIZE && board[nr][nc] === 0)) blocks++;
+                
+                nr = r - dr; nc = c - dc;
+                while(nr >= 0 && nr < GRID_SIZE && nc >= 0 && nc < GRID_SIZE && board[nr][nc] === player) {
+                    count++; nr -= dr; nc -= dc;
+                }
+                if (!(nr >= 0 && nr < GRID_SIZE && nc >= 0 && nc < GRID_SIZE && board[nr][nc] === 0)) blocks++;
+
+                if (count >= 5) score += 100000;
+                else if (count === 4) {
+                    if (blocks === 0) score += 10000;
+                    else if (blocks === 1) score += 1000;
+                } else if (count === 3) {
+                    if (blocks === 0) score += 1000;
+                    else if (blocks === 1) score += 100;
+                } else if (count === 2) {
+                    if (blocks === 0) score += 100;
+                    else if (blocks === 1) score += 10;
+                } else {
+                    score += 1;
+                }
+            }
+            return score;
+        }
+
+        function checkWin(r, c) {
+            const player = board[r][c];
+            if (player === 0) return false;
+            const directions = [
+                [[0, 1], [0, -1]], [[1, 0], [-1, 0]], 
+                [[1, 1], [-1, -1]], [[1, -1], [-1, 1]]
+            ];
+            for (let dir of directions) {
+                let count = 1;
+                for (let [dr, dc] of dir) {
+                    let nr = r + dr;
+                    let nc = c + dc;
+                    while (nr >= 0 && nr < GRID_SIZE && nc >= 0 && nc < GRID_SIZE && board[nr][nc] === player) {
+                        count++;
+                        nr += dr;
+                        nc += dc;
+                    }
+                }
+                if (count >= 5) return true;
+            }
+            return false;
+        }
+
+        function endGame(winner) {
+            isGameOver = true;
+            winningHints = [];
+            AudioEngine.playWin();
+            const winnerName = winner === 1 ? '黑棋' : '白棋';
+            winMessage.innerText = `${winnerName} 獲勝！`;
+            winnerIcon.className = `w-20 h-20 rounded-full mx-auto mb-4 border-4 border-gray-200 ${winner === 1 ? 'bg-black' : 'bg-white'}`;
+            setTimeout(() => winModal.classList.remove('hidden'), 300);
+        }
+
+        function undo() {
+            if (history.length === 0 || isGameOver || isAiThinking) return;
+            AudioEngine.playUndo();
+            if (isAiMode) {
+                if (history.length >= 2) {
+                    let m1 = history.pop();
+                    board[m1.r][m1.c] = 0;
+                    let m2 = history.pop();
+                    board[m2.r][m2.c] = 0;
+                } else {
+                    let m = history.pop();
+                    board[m.r][m.c] = 0;
+                    currentPlayer = 1;
+                }
+            } else {
+                const lastMove = history.pop();
+                board[lastMove.r][lastMove.c] = 0;
+                currentPlayer = lastMove.player;
+            }
+            updateUI();
+            drawBoard();
+        }
+
+        pvpBtn.addEventListener('click', () => {
+            if (isAiThinking) return;
+            isAiMode = false;
+            pvpBtn.classList.add('mode-active');
+            pvcBtn.classList.remove('mode-active');
+            resetGame();
+        });
+
+        pvcBtn.addEventListener('click', () => {
+            if (isAiThinking) return;
+            isAiMode = true;
+            pvcBtn.classList.add('mode-active');
+            pvpBtn.classList.remove('mode-active');
+            resetGame();
+        });
+
+        canvas.addEventListener('mousedown', handleMove);
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            handleMove(e);
+        }, { passive: false });
+
+        undoBtn.addEventListener('click', undo);
+        resetBtn.addEventListener('click', resetGame);
+        playAgainBtn.addEventListener('click', resetGame);
+
+        window.onload = init;
+    </script>
+</body>
+</html>
